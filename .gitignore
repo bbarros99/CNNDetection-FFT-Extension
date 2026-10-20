@@ -1,23 +1,24 @@
-# Python
+
+# Python environment
 .venv/
 __pycache__/
 *.pyc
 
-# Datasets
+# Dataset
 data/
 *.parquet
 
-# Trained models and checkpoints
+# Trained models and pretrained weights
+models/
 *.pth
 *.pt
 *.joblib
 
-# Large generated files
-results/figures/
+# Generated intermediate files
 results/fft_features.csv
 results/final_predictions.csv
 
-# LaTeX temporary files
+# Temporary files
 *.aux
 *.log
 *.out

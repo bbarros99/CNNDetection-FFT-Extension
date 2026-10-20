@@ -1,5 +1,4 @@
 
-from pathlib import Path
 import sys
 
 import joblib
@@ -9,6 +8,7 @@ import torch
 import torchvision.transforms as transforms
 
 from PIL import Image
+
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -16,14 +16,24 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-# Directories
-ROOT = Path(__file__).resolve().parents[2]
-PROJECT = ROOT / "mini_project"
-RESULTS = PROJECT / "results"
-MODELS = PROJECT / "models"
+from project_paths import (
+    CNN_ROOT,
+    DATA,
+    RESULTS,
+    MODELS,
+    WEIGHTS,
+)
 
-sys.path.insert(0, str(ROOT))
+# --------------------------------------------------
+# Original CNNDetection model
+# --------------------------------------------------
+
+sys.path.insert(0, str(CNN_ROOT))
 from networks.resnet import resnet50
+
+# --------------------------------------------------
+# FFT features
+# --------------------------------------------------
 
 FEATURES = [
     "energy_low",
@@ -39,15 +49,43 @@ FEATURES = [
 # Fixed threshold selected on validation
 CNN_THRESHOLD = 0.0000013586
 
+# --------------------------------------------------
+# Check required files
+# --------------------------------------------------
+
+required_files = [
+    RESULTS / "fft_features.csv",
+    MODELS / "fft_classifier.joblib",
+    MODELS / "fusion_classifier.joblib",
+    WEIGHTS,
+]
+
+for path in required_files:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Required file not found: {path}"
+        )
+
+RESULTS.mkdir(parents=True, exist_ok=True)
+
+# --------------------------------------------------
 # Load test images and FFT features
-df = pd.read_csv(RESULTS / "fft_features.csv")
+# --------------------------------------------------
+
+df = pd.read_csv(
+    RESULTS / "fft_features.csv"
+)
+
 test = df[df["split"] == "test"].copy()
 
 assert len(test) == 40, "Expected 40 test images"
 
 y_test = test["label"].to_numpy()
 
+# --------------------------------------------------
 # Load FFT and fusion classifiers
+# --------------------------------------------------
+
 fft_model = joblib.load(
     MODELS / "fft_classifier.joblib"
 )
@@ -56,12 +94,16 @@ fusion_model = joblib.load(
     MODELS / "fusion_classifier.joblib"
 )
 
+# --------------------------------------------------
 # Load original CNNDetection
+# --------------------------------------------------
+
 device = torch.device("cpu")
 
 model = resnet50(num_classes=1)
+
 checkpoint = torch.load(
-    ROOT / "weights" / "blur_jpg_prob0.5.pth",
+    WEIGHTS,
     map_location=device,
     weights_only=False
 )
@@ -69,6 +111,10 @@ checkpoint = torch.load(
 model.load_state_dict(checkpoint["model"])
 model.to(device)
 model.eval()
+
+# --------------------------------------------------
+# Image preprocessing
+# --------------------------------------------------
 
 transform = transforms.Compose([
     transforms.ToTensor(),
@@ -78,13 +124,22 @@ transform = transforms.Compose([
     ),
 ])
 
+# --------------------------------------------------
 # CNN predictions
+# --------------------------------------------------
+
 cnn_scores = []
 
 print("Evaluating CNNDetection on test images...")
 
 for i, row in enumerate(test.itertuples(), 1):
-    image_path = PROJECT / "data" / row.filename
+
+    image_path = DATA / row.filename
+
+    if not image_path.is_file():
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
 
     with Image.open(image_path) as img:
         image = img.convert("RGB")
@@ -94,23 +149,35 @@ for i, row in enumerate(test.itertuples(), 1):
         score = torch.sigmoid(model(tensor)).item()
 
     cnn_scores.append(score)
-    print(f"[{i}/{len(test)}] {row.filename}: {score:.8f}")
+
+    print(
+        f"[{i}/{len(test)}] "
+        f"{row.filename}: {score:.8f}"
+    )
 
 cnn_scores = np.asarray(cnn_scores)
 
+# --------------------------------------------------
 # FFT predictions
+# --------------------------------------------------
+
 fft_scores = fft_model.predict_proba(
     test[FEATURES]
 )[:, 1]
 
-# Apply the same CNN transformation as in fusion.py
+# --------------------------------------------------
+# CNN score transformation for fusion
+# --------------------------------------------------
+
 def cnn_to_logit(scores):
     p = np.clip(
         np.asarray(scores, dtype=float),
         1e-10,
         1 - 1e-10
     )
+
     return np.log(p / (1 - p))
+
 
 fusion_inputs = np.column_stack([
     cnn_to_logit(cnn_scores),
@@ -121,22 +188,43 @@ fusion_scores = fusion_model.predict_proba(
     fusion_inputs
 )[:, 1]
 
+# --------------------------------------------------
 # Evaluation
-def evaluate(name, scores, threshold=0.5):
-    predictions = (scores >= threshold).astype(int)
+# --------------------------------------------------
 
-    accuracy = accuracy_score(y_test, predictions)
-    ap = average_precision_score(y_test, scores)
-    auc = roc_auc_score(y_test, scores)
+def evaluate(name, scores, threshold=0.5):
+
+    predictions = (
+        scores >= threshold
+    ).astype(int)
+
+    accuracy = accuracy_score(
+        y_test, predictions
+    )
+
+    ap = average_precision_score(
+        y_test, scores
+    )
+
+    auc = roc_auc_score(
+        y_test, scores
+    )
 
     print(f"\n=== {name} ===")
+
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Average Precision: {ap:.4f}")
     print(f"ROC AUC: {auc:.4f}")
+
     print("Confusion matrix:")
-    print(confusion_matrix(
-        y_test, predictions, labels=[0, 1]
-    ))
+
+    print(
+        confusion_matrix(
+            y_test,
+            predictions,
+            labels=[0, 1]
+        )
+    )
 
     return {
         "method": name,
@@ -148,25 +236,39 @@ def evaluate(name, scores, threshold=0.5):
 
 results = []
 
-results.append(evaluate(
-    "Original CNN", cnn_scores
-))
+results.append(
+    evaluate(
+        "Original CNN",
+        cnn_scores
+    )
+)
 
-results.append(evaluate(
-    "CNN adapted threshold",
-    cnn_scores,
-    CNN_THRESHOLD
-))
+results.append(
+    evaluate(
+        "CNN adapted threshold",
+        cnn_scores,
+        CNN_THRESHOLD
+    )
+)
 
-results.append(evaluate(
-    "FFT classifier", fft_scores
-))
+results.append(
+    evaluate(
+        "FFT classifier",
+        fft_scores
+    )
+)
 
-results.append(evaluate(
-    "CNN + FFT fusion", fusion_scores
-))
+results.append(
+    evaluate(
+        "CNN + FFT fusion",
+        fusion_scores
+    )
+)
 
+# --------------------------------------------------
 # Save results
+# --------------------------------------------------
+
 pd.DataFrame(results).to_csv(
     RESULTS / "final_metrics.csv",
     index=False

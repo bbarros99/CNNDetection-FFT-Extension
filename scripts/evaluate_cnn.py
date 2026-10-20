@@ -1,7 +1,6 @@
 
 import sys
 import argparse
-from pathlib import Path
 
 import pandas as pd
 import torch
@@ -15,18 +14,14 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
+from project_paths import CNN_ROOT, DATA, RESULTS, WEIGHTS
+
 # --------------------------------------------------
-# Project directories
+# Original CNNDetection model
 # --------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[2]
-PROJECT = ROOT / "mini_project"
-RESULTS = PROJECT / "results"
-
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(CNN_ROOT))
 from networks.resnet import resnet50
-
-WEIGHTS = ROOT / "weights" / "blur_jpg_prob0.5.pth"
 
 # --------------------------------------------------
 # Command-line arguments
@@ -45,6 +40,24 @@ parser.add_argument(
 
 args = parser.parse_args()
 split = args.split
+
+# --------------------------------------------------
+# Check required files
+# --------------------------------------------------
+
+if not WEIGHTS.is_file():
+    raise FileNotFoundError(
+        f"CNNDetection weights not found: {WEIGHTS}"
+    )
+
+features_path = RESULTS / "fft_features.csv"
+
+if not features_path.is_file():
+    raise FileNotFoundError(
+        f"FFT features not found: {features_path}"
+    )
+
+RESULTS.mkdir(parents=True, exist_ok=True)
 
 # --------------------------------------------------
 # Load original CNNDetection model
@@ -82,12 +95,14 @@ transform = transforms.Compose([
 # Load selected dataset
 # --------------------------------------------------
 
-df = pd.read_csv(RESULTS / "fft_features.csv")
+df = pd.read_csv(features_path)
 
 split_data = df[df["split"] == split].copy()
 
 if split_data.empty:
-    raise ValueError(f"No images found for split: {split}")
+    raise ValueError(
+        f"No images found for split: {split}"
+    )
 
 print(f"\nEvaluating {len(split_data)} {split} images...")
 
@@ -99,7 +114,12 @@ scores = []
 
 for i, row in enumerate(split_data.itertuples(), start=1):
 
-    image_path = PROJECT / "data" / row.filename
+    image_path = DATA / row.filename
+
+    if not image_path.is_file():
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
 
     with Image.open(image_path) as img:
         image = img.convert("RGB")
@@ -122,7 +142,10 @@ for i, row in enumerate(split_data.itertuples(), start=1):
 split_data["cnn_score"] = scores
 
 y_true = split_data["label"]
-predictions = (split_data["cnn_score"] >= 0.5).astype(int)
+
+predictions = (
+    split_data["cnn_score"] >= 0.5
+).astype(int)
 
 print(f"\n=== CNNDetection {split.capitalize()} Results ===")
 
