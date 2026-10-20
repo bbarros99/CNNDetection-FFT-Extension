@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Datasets
+data/
+*.parquet
+
+# Trained models and checkpoints
+*.pth
+*.pt
+*.joblib
+
+# Large generated files
+results/figures/
+results/fft_features.csv
+results/final_predictions.csv
+
+# LaTeX temporary files
+*.aux
+*.log
+*.out
+*.synctex.gz
+
+# Secrets
+.env
+.env.*
